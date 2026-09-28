@@ -423,6 +423,19 @@ namespace d3d12hook {
             }
         }
 
+        // PROBE: histograma da identificacao (F9), antes de aplicar wallhack
+        if (g_probeOn)
+        {
+            uint32_t rsig_ = (tlsCurrentCmdList == _this) ? tlsCurrentRootSigID : 0;
+            ProbeSampleDI(isModelDraw, (int)currentStrides, t_.currentNumRTVs,
+                cache.lastRDTindex, cache.lastRCBVindex,
+                IndexCountPerInstance / 1000, (int)t_.currentViewport.Width,
+                rsig_,
+                (int)(((UINT)currentPSO >> 12) % 100),
+                (int)((t_.currentGPUIAddress >> 12) % 100),
+                t_.numViews, (int)t_.currentIndexFormat, InstanceCount);
+        }
+
         if (isModelDraw) 
         {
             // 3. FILTER LOGIC
@@ -500,7 +513,9 @@ namespace d3d12hook {
             }
               
 
-            //WALLHACK
+            //WALLHACK (gate: tecla 1 = g_whOn)
+            if (g_whOn)
+            {
             //4. VIEWPORT EXECUTION, MUST BE A COPY, NOT A REFERENCE, to prevent flickering/state corruption
             const D3D12_VIEWPORT originalVp = t_.currentViewport;
             if (originalVp.Width >= 128 && originalVp.Width < 16384) 
@@ -513,6 +528,7 @@ namespace d3d12hook {
                 oDrawIndexedInstancedD3D12(_this, IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
                 _this->RSSetViewports(1, &originalVp);
                 return;
+            }
             }
 
         }
@@ -608,6 +624,19 @@ namespace d3d12hook {
             }
         }
 
+        // PROBE: histograma da identificacao (F9), antes de aplicar wallhack
+        if (g_probeOn)
+        {
+            uint32_t rsig_ = (tlsCurrentCmdList == _this) ? tlsCurrentRootSigID : 0;
+            ProbeSampleEI(isModelDraw, (int)currentExIStride, t_.currentNumRTVs,
+                cache.lastRDTindex, cache.lastRCBVindex,
+                MaxCommandCount, (int)t_.currentViewport.Width,
+                rsig_,
+                (int)(((UINT)t_.currentPSO >> 12) % 100),
+                (int)((t_.currentGPUIAddress >> 12) % 100),
+                (int)t_.currentIndexFormat);
+        }
+
         if (isModelDraw)
         {
             // 3. FILTER LOGIC
@@ -683,7 +712,9 @@ namespace d3d12hook {
             }
 
 
-            //WALLHACK
+            //WALLHACK (gate: tecla 1 = g_whOn)
+            if (g_whOn)
+            {
             //4. VIEWPORT EXECUTION, MUST BE A COPY, NOT A REFERENCE, to prevent flickering/state corruption
             const D3D12_VIEWPORT originalVp = t_.currentViewport;
             if (originalVp.Width >= 128 && originalVp.Width < 16384)
@@ -696,6 +727,7 @@ namespace d3d12hook {
                 oExecuteIndirectD3D12(_this, pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset);
                 _this->RSSetViewports(1, &originalVp);
                 return;
+            }
             }
         }
 

@@ -98,6 +98,9 @@ int cri8 = 0;
 int cri9 = 0;
 int cri10 = 0;
 
+// master do depth-trick (tecla 1) — ver atraves da parede
+bool g_whOn = false;
+
 bool ExecuteIndirectisCalled = 0;
 
 using namespace std;
@@ -193,6 +196,8 @@ void SaveConfig()
     fout << "cri8 " << cri8 << endl;
     fout << "cri9 " << cri9 << endl;
     fout << "cri10 " << cri10 << endl;
+
+    fout << "whOn " << g_whOn << endl;
 
     fout.close();
 }
@@ -291,6 +296,8 @@ void LoadConfig()
         else if (key == "cri9")  fin >> cri9;
         else if (key == "cri10") fin >> cri10;
 
+        else if (key == "whOn") fin >> g_whOn;
+
         // Ignore unknown keys (just consume the value)
         else
         {
@@ -300,6 +307,100 @@ void LoadConfig()
     }
 
     fin.close();
+}
+
+// ============================================================
+// PROBE — descoberta de valores de identificacao (sem menu)
+// Tecla F9 liga/desliga; ao desligar grava histogramas em
+// d3d12wh_probe.txt (dir do jogo). USO: ligar no menu, jogar
+// ~60s no treino com bots, desligar. Eu calibro o ini daí.
+// ============================================================
+#include <map>
+#include <mutex>
+#include <ctime>
+#include <algorithm>
+#include <functional>
+
+struct ProbeHists { std::map<int, long long> h[16]; };
+static std::mutex g_probeMtx;
+static ProbeHists g_probeDI, g_probeEI;
+static long long g_probeDICount = 0, g_probeEICount = 0;
+static bool g_probeOn = false;
+
+// campos DI: 0 mdl 1 stride 2 rtv 3 rdt 4 rcbv 5 idx1k 6 vpw 7 rsig 8 psoid 9 iaidx 10 nv 11 ifmt 12 inst
+// campos EI: 0 mdl 1 exi  2 rtv 3 rdt 4 rcbv 5 maxc 6 vpw 7 rsig 8 psoid 9 iaidx 10 ifmt
+
+static inline int ProbeNorm(unsigned v) { return (v > 100000) ? -1 : (int)v; } // UINT_MAX -> -1
+
+void ProbeSampleDI(bool mdl, int stride, unsigned rtv, unsigned rdt, unsigned rcbv,
+                   int idx1k, int vpw, unsigned rsig, int psoid, int iaidx,
+                   unsigned nv, int ifmt, unsigned inst)
+{
+    if (!g_probeOn) return;
+    int v[13] = { mdl ? 1 : 0, stride, ProbeNorm(rtv), ProbeNorm(rdt), ProbeNorm(rcbv),
+                  idx1k, vpw, (int)rsig, psoid, iaidx, (int)nv, ifmt, (int)inst };
+    std::lock_guard<std::mutex> lk(g_probeMtx);
+    for (int i = 0; i < 13; i++) g_probeDI.h[i][v[i]]++;
+    g_probeDICount++;
+}
+
+void ProbeSampleEI(bool mdl, int exi, unsigned rtv, unsigned rdt, unsigned rcbv,
+                   int maxc, int vpw, unsigned rsig, int psoid, int iaidx, int ifmt)
+{
+    if (!g_probeOn) return;
+    int v[11] = { mdl ? 1 : 0, exi, ProbeNorm(rtv), ProbeNorm(rdt), ProbeNorm(rcbv),
+                  maxc, vpw, (int)rsig, psoid, iaidx, ifmt };
+    std::lock_guard<std::mutex> lk(g_probeMtx);
+    for (int i = 0; i < 11; i++) g_probeEI.h[i][v[i]]++;
+    g_probeEICount++;
+}
+
+static void ProbeDumpLine(std::ofstream& f, const char* name, const std::map<int, long long>& m, int cap)
+{
+    f << name << ":";
+    std::vector<std::pair<long long, int>> v;
+    v.reserve(m.size());
+    for (auto& kv : m) v.push_back({ kv.second, kv.first });
+    std::sort(v.begin(), v.end(), std::greater<std::pair<long long, int>>());
+    int n = 0;
+    for (auto& p : v) { if (n++ >= cap) break; f << " " << p.second << ":" << p.first; }
+    f << "\n";
+}
+
+static const char* kProbeDIFields[13] = { "mdl","stride","rtv","rdt","rcbv","idx1k","vpw","rsig","psoid","iaidx","nv","ifmt","inst" };
+static const char* kProbeEIFields[11] = { "mdl","exi","rtv","rdt","rcbv","maxc","vpw","rsig","psoid","iaidx","ifmt" };
+
+void ProbeToggle() // hotkey F9
+{
+    bool turningOn = !g_probeOn;
+    g_probeOn = turningOn;
+    std::ofstream f("d3d12wh_probe.txt", std::ios::app);
+    if (!f.is_open()) return;
+    if (turningOn)
+    {
+        SYSTEMTIME st_; GetLocalTime(&st_);
+        char ts_[64];
+        sprintf_s(ts_, "=== SESSION START %04d-%02d-%02d %02d:%02d:%02d ===\n",
+            st_.wYear, st_.wMonth, st_.wDay, st_.wHour, st_.wMinute, st_.wSecond);
+        f << "\n" << ts_;
+    }
+    else
+    {
+        std::lock_guard<std::mutex> lk(g_probeMtx);
+        SYSTEMTIME st_; GetLocalTime(&st_);
+        char ts_[64];
+        sprintf_s(ts_, "=== SESSION END %04d-%02d-%02d %02d:%02d:%02d ===\n",
+            st_.wYear, st_.wMonth, st_.wDay, st_.wHour, st_.wMinute, st_.wSecond);
+        f << ts_;
+        f << "DI=" << g_probeDICount << " EI=" << g_probeEICount << "\n";
+        for (int i = 0; i < 13; i++) ProbeDumpLine(f, kProbeDIFields[i], g_probeDI.h[i], 30);
+        for (int i = 0; i < 11; i++) ProbeDumpLine(f, kProbeEIFields[i], g_probeEI.h[i], 30);
+        f << "\n";
+        g_probeDI = ProbeHists{};
+        g_probeEI = ProbeHists{};
+        g_probeDICount = g_probeEICount = 0;
+    }
+    Log("[probe] %s\n", turningOn ? "ON" : "OFF (gravado em d3d12wh_probe.txt)");
 }
 
 // ============================================================
@@ -565,6 +666,7 @@ void InitRTVsAndImGui()
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr; // sem imgui.ini — menu nao existe mais
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui_ImplWin32_Init(g_overlayHwnd);
     ImGui_ImplDX12_Init(
@@ -666,31 +768,56 @@ void Render()
 {
     ResizeOverlayIfNeeded();
 
-    if (GetAsyncKeyState(VK_INSERT) & 1) //menu key
+    // ===================== HOTKEYS (menu removido) =====================
+    // 1       = liga/desliga wallhack (ver atraves da parede)
+    // 2       = liga/desliga cor vermelha nos players
+    // F9      = sonda de identificacao (grava d3d12wh_probe.txt ao desligar)
+    // F8 seg. = varre coloroffset 0..104 (passo 4) apos 150ms
+    if (GetAsyncKeyState('1') & 1)
     {
-        SaveConfig(); //Save settings
-        g_showMenu = !g_showMenu;
-        g_clickThrough = !g_showMenu;
-
-        LONG_PTR exStyle = GetWindowLongPtr(g_overlayHwnd, GWL_EXSTYLE);
-
-        if (g_showMenu)
+        g_whOn = !g_whOn;
+        Log("[hotkey] wallhack=%d\n", g_whOn ? 1 : 0);
+        SaveConfig();
+    }
+    if (GetAsyncKeyState('2') & 1)
+    {
+        enablecolor = !enablecolor;
+        if (enablecolor)
         {
-            // REMOVE NOACTIVATE and TRANSPARENT
-            SetWindowLongPtr(g_overlayHwnd, GWL_EXSTYLE, exStyle & ~WS_EX_TRANSPARENT & ~WS_EX_NOACTIVATE);
-
-            // Force the window to the front and give it keyboard focus
-            SetForegroundWindow(g_overlayHwnd);
-            SetActiveWindow(g_overlayHwnd);
-            SetFocus(g_overlayHwnd);
+            // liga todos os root indices de cor — players usam um CBV desconhecido
+            cri0 = cri1 = cri2 = cri3 = cri4 = cri5 = cri6 = cri7 = cri8 = cri9 = cri10 = 1;
         }
-        else
+        Log("[hotkey] color=%d coloroffset=%d\n", enablecolor ? 1 : 0, coloroffset);
+        SaveConfig();
+    }
+    if (GetAsyncKeyState(VK_F9) & 1)
+    {
+        ProbeToggle();
+    }
+    if (GetAsyncKeyState(VK_F8) & 0x8000)
+    {
+        static DWORD lastStep = 0;
+        if (GetTickCount() - lastStep > 150)
         {
-            // ADD NOACTIVATE and TRANSPARENT
-            SetWindowLongPtr(g_overlayHwnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
-            SetForegroundWindow(g_gameHwnd);
+            lastStep = GetTickCount();
+            coloroffset += 4;
+            if (coloroffset > 100) coloroffset = 0;
+            Log("[hotkey] coloroffset=%d\n", coloroffset);
         }
     }
+    else
+    {
+        // ao soltar F8, persiste o offset encontrado
+        static DWORD lastSave = 0;
+        static int lastOff = -1;
+        if (lastOff != coloroffset && GetTickCount() - lastSave > 500)
+        {
+            lastSave = GetTickCount();
+            lastOff = coloroffset;
+            SaveConfig();
+        }
+    }
+    // ===================================================================
 
     UpdateInputState();
 
@@ -1216,9 +1343,19 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved
 {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
+    {
+        // AppInit_DLLs carrega esta DLL em TODO processo do usuario.
+        // Ativa SOMENTE em RainbowSix.exe (nao no servico do BattlEye nem nada mais).
+        char exePath[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        const char* exeName = strrchr(exePath, '\\');
+        exeName = exeName ? exeName + 1 : exePath;
+        if (_stricmp(exeName, "RainbowSix.exe") != 0)
+            return TRUE;
+
         DisableThreadLibraryCalls(hModule);
         globals::mainModule = hModule;
-        //Log("[DllMain] DLL_PROCESS_ATTACH: hModule=%p\n", hModule);
+        Log("[DllMain] ativando no processo: %s\n", exePath);
         // hook setup
         {
             HANDLE thread = CreateThread(nullptr, 0,onAttach,nullptr,0,nullptr);
@@ -1226,6 +1363,7 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved
             else Log("[DllMain] Failed to create hook thread: %d\n", GetLastError());
         }
         break;
+    }
 
     case DLL_PROCESS_DETACH:
         g_running = false; // Signal all threads to stop
