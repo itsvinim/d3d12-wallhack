@@ -147,6 +147,9 @@
     <ClCompile Include="minhook\src\trampoline.c" />
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="d3d12h.rc" />
+  </ItemGroup>
+  <ItemGroup>
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_impl_dx10.h" />

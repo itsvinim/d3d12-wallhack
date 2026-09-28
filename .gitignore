@@ -1,0 +1,18 @@
+# build output
+x64/
+d3d12h/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# visual studio local state
+.vs/
+*.user
+*.suo
+
+# runtime files
+d3d12wh.ini
+d3d12wh_probe.txt
+log.txt
